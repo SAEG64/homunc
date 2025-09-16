@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jan 29 22:32:06 2025
+
+@author: sergej
+"""
+# %% ==========================================================================
+# Preprocess data
+# =============================================================================
+from sklearn.preprocessing import OneHotEncoder
+import pandas as pd
+import numpy as np
+import os
+# Parse data
+path = os.path.dirname(__file__)+"/"
+os.chdir(path)
+data = pd.read_csv("data_beh/HOMUNC_data_beh_A_pilot_v1.csv")
+
+# Data modifications
+data['Reward'] = np.where(data['x12_continuous_energy_trial_end'] == 0, -1, 0).astype(np.float32)
+data['dead'] = np.where(data['x6_continuous_energy_trial_start'] == 0, 1, 0).astype(np.float32)
+data['horizon'] = 5
+data['x7_weather_type'] = data['x7_weather_type']-1
+data['x7_weather_type'] = data['x7_weather_type'].apply(lambda x: np.random.randint(0, 2) if x == -1 else x)
+
+# Create ternary state
+condi_s = []
+for index, row in data.iterrows():
+    # Three conditions model
+    condi_s.append(0.5)   # 'random'
+    if row['x6_continuous_energy_trial_start'] > 6 - row['x5_order_trials_in_forest'] == 1:
+        condi_s[index] = 0  # wait-when-safe
+    if row['x6_continuous_energy_trial_start'] == 1:
+        condi_s[index] = 1  # binary energy state
+data['BNW_conditions'] = condi_s
+
+# Identify categorical and continuous features
+categorical_features = ["x7_weather_type", "BNW_conditions"]
+continuous_features = ["horizon", "x6_continuous_energy_trial_start",
+                "x19_weather_1_p_gain", "x20_weather_2_p_gain", 
+                "x17_weather_1_gain_magnitude", "x18_weather_2_gain_magnitude",
+                "x11_choice", "Reward", "x12_continuous_energy_trial_end"]#,
+                # "dead"]
+
+# Apply OneHotEncoder to categorical features
+encoder = OneHotEncoder(drop=None, sparse_output=False)
+encoded_categorical = encoder.fit_transform(data[categorical_features])
+# Convert encoded features to DataFrame
+encoded_feature_names = encoder.get_feature_names_out(categorical_features)
+encoded_df = pd.DataFrame(encoded_categorical, columns=encoded_feature_names)
+# Encode absorbing death state
+encoded_df.iloc[:,2:].loc[data['x6_continuous_energy_trial_start'] == 0, :] = 0
+
+# Add categorical and filter redundant columns
+processed_data = pd.concat([data[["x1_id", "x4_index_forests", "x2_session"]], data[continuous_features], encoded_df.iloc[:, :]], axis=1)
+
+# Group data by Participant and Episode
+grouped = processed_data.groupby(["x1_id", "x4_index_forests", "x2_session"], sort=False)
+
+# %% ==========================================================================
+# Encode trajectories
+# =============================================================================
+from imitation.data.types import TrajectoryWithRew
+# from imitation.data.types import Transitions
+from imitation.data import rollout
+from typing import List
+import torch
+
+trajectories: List[TrajectoryWithRew] = []
+Rs = []  # Raw rewards for evaluation
+for _, group in grouped:
+    group.reset_index(drop=True, inplace=True)
+
+    # p success and gain magnitude
+    group['p_success'] = np.where(group['x7_weather_type_1.0'] == 1, 
+                                  group['x20_weather_2_p_gain'],
+                                  group['x19_weather_1_p_gain']).astype(np.float32)
+    group['gain_magnitude'] = np.where(group['x7_weather_type_1.0'] == 1,
+                                       group['x18_weather_2_gain_magnitude'],
+                                       group['x17_weather_1_gain_magnitude']).astype(np.float32)
+    # Observations
+    states = group[["x19_weather_1_p_gain", "x20_weather_2_p_gain"] +
+                    ["p_success"] +
+                    ["gain_magnitude"] + 
+                    # list(encoded_df.columns)[1:] +
+                    ["horizon", 
+                    "x17_weather_1_gain_magnitude", 
+                    "x18_weather_2_gain_magnitude",
+                    "x6_continuous_energy_trial_start"]]#,
+                    # "dead"]]
+    # Actions and rewards
+    actions = group["x11_choice"].values
+    rewards = group["Reward"].values
+    
+    # Override "days left" with horizon
+    states.loc[:,'horizon'] = states.iloc[0]['horizon']
+    
+    # Actions
+    actions = torch.tensor(actions, dtype=torch.float32).view(-1, 1)
+    actions = np.array(actions, dtype=np.float32)
+        
+    # Convert horizon to days left
+    row_count = states.shape[0]
+    ascending_col = np.arange(1, row_count + 1).reshape(-1, 1) - 1
+    horizon_adj = np.array(states.loc[:,'horizon']).reshape(-1,1) - ascending_col
+    states.loc[:,'horizon'] = horizon_adj[:,0]
+    
+    # Additional information
+    infos = [{'success': True} if states.iloc[x]['horizon'] == 1 and group.iloc[x]['x12_continuous_energy_trial_end'] != 0 else {'success': False} for x in range(int(states.iloc[0]['horizon']))]  # Last step of each episode is terminal
+    
+    ## Categorical variables
+    categ = {col: 0 for col in encoded_df.columns}
+    # Encode random weather last day
+    categ[list(categ.keys())[np.random.randint(0, 2, size=1)[0]]] = 1
+    if group.iloc[-1]["x12_continuous_energy_trial_end"] != 0:
+        # Encode ternary state last day
+        bnw = 1
+        if group.iloc[-1]["x12_continuous_energy_trial_end"] == 1:
+            bnw = 2
+        elif group.iloc[-1]["x12_continuous_energy_trial_end"] > 1:
+            bnw = 0
+        categ[list(categ.keys())[bnw+2]] = 1 
+    
+    # Add last day/outcome
+    last_state = [
+        group.iloc[-1]["x19_weather_1_p_gain"], 
+        group.iloc[-1]["x20_weather_2_p_gain"]] + [
+            np.where(categ['x7_weather_type_1.0'] == 1, 
+                                  group.iloc[-1]['x20_weather_2_p_gain'].astype(np.float32),
+                                  group.iloc[-1]['x19_weather_1_p_gain'].astype(np.float32)).astype(np.float32)] + [#list(
+            np.where(categ['x7_weather_type_1.0'] == 1, 
+                                  group.iloc[-1]['x18_weather_2_gain_magnitude'].astype(np.float32),
+                                  group.iloc[-1]['x17_weather_1_gain_magnitude'].astype(np.float32)).astype(np.float32)] + [#list(
+        # list(categ.values())[1:]) + [
+        0,
+        group.iloc[-1]["x17_weather_1_gain_magnitude"], 
+        group.iloc[-1]["x18_weather_2_gain_magnitude"],
+        group.iloc[-1]["x12_continuous_energy_trial_end"]#,
+        # np.where(group.iloc[-1]["x12_continuous_energy_trial_end"] == 0, 1, 0)
+        ]
+    states = np.append(states, [last_state], axis=0)
+    # states = states.astype(np.float32)
+
+    # terminal = [True if data.iloc[x]['x17_horizon_correct_adjusted'] == 1 else False for x in range(len(data))]  # Last step of each episode is terminal
+    done = [False] * (len(actions)-1) + [True]  # Last step of each episode is terminal
+    # Assemble trajectory
+    trajectories.append(TrajectoryWithRew(obs=states, acts=actions, rews=rewards, terminal=done, infos=infos))
+    
+    # Manually extract raw rewards (used for evaluation)
+    Rs.append(rewards)
+
+transitions = rollout.flatten_trajectories(trajectories)
+
+# %% ==========================================================================
+# Aggregate data for evaluation
+# =============================================================================
+agg_R = [sum(Rs[i]) for i in range(len(Rs))]
+agg = data.groupby(["x1_id", "x4_index_forests", "x2_session"]).sum()
+dec = data.groupby(["x1_id", "x4_index_forests", "x2_session"]).agg({'x11_choice': 'mean'})
+agg['av_choice'] = dec['x11_choice']
+agg['rewards'] = agg_R
+
+summary_stats = agg.groupby("x1_id")["rewards"].agg(["mean", "std", "count"])
+summary_stats["SE"] = summary_stats["std"] / np.sqrt(summary_stats["count"])
+
+
+# agg = agg.groupby(["x1_id"]).mean()
+# agg_rew = agg['rewards']
+# agg_act = agg['av_choice']
+
+# Rews = [np.sum(np.array(Rs)[i,:]) for i in range(np.array(Rs).shape[0])]
+
+
+# # Saving the trajectory data as a .npz file
+# np.savez("data_beh/trajectories.npz", *[t for t in trajectories])

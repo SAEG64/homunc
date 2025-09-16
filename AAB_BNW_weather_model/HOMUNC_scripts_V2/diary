@@ -1,0 +1,17 @@
+
+SPM12: spm_results_ui (v7388)                      14:12:34 - 19/02/2025
+========================================================================
+	contrast image  1               :                   ...computing{Out of memory. The likely cause is an infinite recursion within the program.
+
+Error in <a href="matlab:matlab.internal.language.introspective.errorDocCallback('spm_create_image', '/home/sergej/spm12/toolbox/marsbar/marsbar/spm2/spm_create_image.m', 11)" style="font-weight:bold">spm_create_image</a> (<a href="matlab: opentoline('/home/sergej/spm12/toolbox/marsbar/marsbar/spm2/spm_create_image.m',11,0)">line 11</a>)
+V = spm_create_vol(V);
+} 
+Error while evaluating UIControl Callback.
+
+fMRI_cale_homunc_v9
+[Warning: Directory already exists.] 
+[> In <a href="matlab:matlab.internal.language.introspective.errorDocCallback('fMRI_cale_homunc_v9', '/media/sergej/Extreme SSD/HOMUNC_parent/AAB_BNW_weather_simple/HOMUNC_scripts_V2/fMRI_cale_homunc_v9.m', 17)" style="font-weight:bold">fMRI_cale_homunc_v9</a> (<a href="matlab: opentoline('/media/sergej/Extreme SSD/HOMUNC_parent/AAB_BNW_weather_simple/HOMUNC_scripts_V2/fMRI_cale_homunc_v9.m',17,0)">line 17</a>)] 
+
+SPM12: spm_results_ui (v7388)                      15:47:14 - 19/02/2025
+========================================================================
+	SPM computation                 :                ...initialising           ...height threshold           ...extent threshold                       ...done
