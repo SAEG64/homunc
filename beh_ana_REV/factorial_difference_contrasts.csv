@@ -1,3 +1,0 @@
-contrast,coefficient_a,coefficient_b,estimate,SE,z,p
-Wait When Safe vs Binary Energy (Weather interaction),BNW_conditionsWait When Safe:x7_weather_type2,BNW_conditionsBinary Energy:x7_weather_type2,-0.16822770706143886,0.2902951568382555,-0.5795057309728757,0.5622479807704588
-Wait When Safe vs Binary Energy (Three-way interaction),BNW_conditionsWait When Safe:x7_weather_type2:p_success_centered,BNW_conditionsBinary Energy:x7_weather_type2:p_success_centered,-2.9837511061402915,3.7946138166387953,-0.7863121915218365,0.4316846117841718
