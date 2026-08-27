@@ -210,6 +210,92 @@ print("Headers after x56:")
 formatted_headers = [f"{{'{col[1:]}'}}" for col in x57_plus_columns]
 print("[" + ", ".join(formatted_headers) + "]")
 
+# %% Additional analysis
+"""=== Compare BC with Mechanistic Models for Benchmarking ==="""
+# =======================================================================
+# Compare BC with OP multi-heuristic model predictions
+# -------------------------------------------------
+from statsmodels.genmod.bayes_mixed_glm import BinomialBayesMixedGLM
+import scipy.sparse as sp
+from sklearn.metrics import roc_auc_score
+
+multi_heur_pred = pd.read_csv(path + 'multi_heuristic_prediction.csv')
+
+# Redefine variables
+d['subject'] = d['x1_id']
+d['acts'] = d['x11_choice']
+d['BNW_fact'] = pd.Categorical(d['BNW_conditions'])
+d['weather_fact'] = pd.Categorical(d['x7_weather_type'])
+
+# Filter data
+d = d[~d['x9_button_pressed'].isna()]
+d = d[d['x6_continuous_energy_trial_start'] != 0]
+d = d[d['x14_p_foraging_gain'] > 0.3]
+d = d[d['x14_p_foraging_gain'] < 0.7]
+d = d.reset_index(drop=True)
+
+
+print("run model: BC")
+
+# Get current decision variable
+d['DV_main'] = d["value_net"]
+
+# Fit logistic regression using statsmodel variational Bayes mean field
+random = {"subject": '0 + C(subject)'}  # Random intercept for each subject
+log_reg = BinomialBayesMixedGLM.from_formula(
+                'acts ~ DV_main * BNW_fact', random, d)
+result = log_reg.fit_vb()
+
+# Extract Mean (Posterior Mean) and Standard Deviation (Posterior SD)
+posterior_mean = result.params  # Mean of posterior
+# Posterior Standard Deviations (square root of diagonal of posterior covariance)
+posterior_cov = result.cov_params()  # Approximate covariance matrix
+posterior_sd = sp.csr_matrix(np.sqrt(np.diag(posterior_cov))).data  # Standard deviations
+
+# Model evidence using evidence lower bound
+elbo = log_reg.vb_elbo(vb_mean=posterior_mean, vb_sd=posterior_sd)
+print(f"evidence lower bound BNW_fact value_net = {elbo:.3f}")
+
+# Predict actions
+actions_pred = result.predict()
+# Area under the curve
+auc = roc_auc_score(d['acts'], actions_pred)
+print(f"AUC-ROC = {auc:.3f}")
+
+# Correlate BC with multi-heuristic policy predictions
+print("Correlation between BC and multi-heuristic model predictions:", np.corrcoef(actions_pred, multi_heur_pred.T.values)[0,1])
+
+# ------------------------------------------------------------------------------------------------------------------------------
+print("run model: OP")
+
+# Get current decision variable
+d['DV_main'] = d["x22_optimal_policy"]
+
+# Fit logistic regression using statsmodel variational Bayes mean field
+random = {"subject": '0 + C(subject)'}  # Random intercept for each subject
+log_reg = BinomialBayesMixedGLM.from_formula(
+                'acts ~ DV_main * BNW_fact', random, d)
+result = log_reg.fit_vb()
+
+# Extract Mean (Posterior Mean) and Standard Deviation (Posterior SD)
+posterior_mean = result.params  # Mean of posterior
+# Posterior Standard Deviations (square root of diagonal of posterior covariance)
+posterior_cov = result.cov_params()  # Approximate covariance matrix
+posterior_sd = sp.csr_matrix(np.sqrt(np.diag(posterior_cov))).data  # Standard deviations
+
+# Model evidence using evidence lower bound
+elbo = log_reg.vb_elbo(vb_mean=posterior_mean, vb_sd=posterior_sd)
+print(f"evidence lower bound BNW_fact value_net = {elbo:.3f}")
+
+# Predict actions
+actions_pred_OP = result.predict()
+# Area under the curve
+auc = roc_auc_score(d['acts'], actions_pred_OP)
+print(f"AUC-ROC = {auc:.3f}")
+
+# Correlate BC with multi-heuristic policy predictions
+print("Correlation between BC and optimal policy predictions:", np.corrcoef(actions_pred, actions_pred_OP)[0,1])
+
 # %% 4. =======================================================================
 # 4. Export subject-specific dataframes with neural network outputs
 # =============================================================================
@@ -361,7 +447,7 @@ cbar1.set_label("Predicted Action Value")
 # Add labels and title
 ax1.set_xlabel("Network Component 1")
 ax1.set_ylabel("Network Component 2")
-ax1.set_title("ANN Predicted Action Values", pad=20)
+ax1.set_title("Behavioral Cloning Policy Scores", pad=20)
 
 # Consistent grid and tick formatting
 ax1.tick_params(axis='both', which='major', width=2, length=6)
@@ -479,16 +565,16 @@ plt.rcParams.update({
 # Visualize the SHAP values for the PCA-transformed test set
 plt.figure(figsize=(12, 8))
 shap.summary_plot(shap_values, X_test, feature_names=input_features, show=False)
-plt.title('SHAP Feature Importance Summary', fontsize=18, fontweight='bold', pad=20)
-plt.xlabel('SHAP Value (Impact on Model Output)', fontsize=16, fontweight='bold')
+plt.title('SHAP Feature Importance Summary', fontsize=18, pad=20)
+plt.xlabel('SHAP Value (Impact on Model Output)', fontsize=16)
 plt.tight_layout()
 plt.show()
 
 # Feature importance plot (bar chart)
 plt.figure(figsize=(10, 8))
 shap.summary_plot(shap_values, X_test, plot_type="bar", feature_names=input_features, show=False)
-plt.title('SHAP Feature Importance Ranking', fontsize=18, fontweight='bold', pad=20)
-plt.xlabel('Mean |SHAP Value|', fontsize=16, fontweight='bold')
+plt.title('SHAP Feature Importance Ranking', fontsize=18, pad=20)
+plt.xlabel('Mean |SHAP Value|', fontsize=16)
 plt.tight_layout()
 plt.show()
 
@@ -504,9 +590,9 @@ shap.dependence_plot(
     interaction_index=feature2_index,
     feature_names=input_features,
     show=False)
-plt.title('Feature Interaction: Current Energy × Food Gain', fontsize=18, fontweight='bold', pad=20)
-plt.xlabel('Current Energy', fontsize=16, fontweight='bold')
-plt.ylabel('SHAP Value for Current Energy', fontsize=16, fontweight='bold')
+plt.title('Feature Interaction: Current Energy × Food Gain', fontsize=18, pad=20)
+plt.xlabel('Current Energy', fontsize=16)
+plt.ylabel('SHAP Value for Current Energy', fontsize=16)
 plt.tight_layout()
 plt.show()
 
@@ -520,9 +606,9 @@ shap.dependence_plot(
     interaction_index=feature2_index,
     feature_names=input_features,
     show=False)
-plt.title('Feature Interaction: Current Energy × P(Success)', fontsize=18, fontweight='bold', pad=20)
-plt.xlabel('Current Energy', fontsize=16, fontweight='bold')
-plt.ylabel('SHAP Value for Current Energy', fontsize=16, fontweight='bold')
+plt.title('Feature Interaction: Current Energy × P(Success)', fontsize=18, pad=20)
+plt.xlabel('Current Energy', fontsize=16)
+plt.ylabel('SHAP Value for Current Energy', fontsize=16)
 plt.tight_layout()
 plt.show()
 
@@ -536,9 +622,9 @@ shap.dependence_plot(
     interaction_index=feature2_index,
     feature_names=input_features,
     show=False)
-plt.title('Feature Interaction: Food Gain × Gain Bad', fontsize=18, fontweight='bold', pad=20)
-plt.xlabel('Food Gain', fontsize=16, fontweight='bold')
-plt.ylabel('SHAP Value for Food Gain', fontsize=16, fontweight='bold')
+plt.title('Feature Interaction: Food Gain × Gain Bad', fontsize=18, pad=20)
+plt.xlabel('Food Gain', fontsize=16)
+plt.ylabel('SHAP Value for Food Gain', fontsize=16)
 plt.tight_layout()
 plt.show()
 
@@ -552,9 +638,9 @@ shap.dependence_plot(
     interaction_index=feature2_index,
     feature_names=input_features,
     show=False)
-plt.title('Feature Interaction: Current Energy × Horizon', fontsize=18, fontweight='bold', pad=20)
-plt.xlabel('Current Energy', fontsize=16, fontweight='bold')
-plt.ylabel('SHAP Value for Current Energy', fontsize=16, fontweight='bold')
+plt.title('Feature Interaction: Current Energy × Horizon', fontsize=18, pad=20)
+plt.xlabel('Current Energy', fontsize=16)
+plt.ylabel('SHAP Value for Current Energy', fontsize=16)
 plt.tight_layout()
 plt.show()
 
@@ -922,7 +1008,7 @@ plt.rcParams.update({
 # Create comprehensive visualization with publication settings
 fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 fig.suptitle('Factorial GLM: Trial Type × Weather Type Effects on ANN Activity', 
-             fontsize=40, fontweight='bold')
+             fontsize=40)
 
 for layer_idx, (layer_name, dv_col) in enumerate(zip(layer_names, dv_columns)):
     
@@ -1291,7 +1377,7 @@ for i, trial_type in enumerate(trial_types):
     ax.zaxis.line.set_linewidth(2)
 
 plt.tight_layout(pad=1.0)  # Reduced padding between subplots
-plt.suptitle('Parametric Modulation by P(Success) and P(Alternative) Across Trial Types', 
+plt.suptitle('BC policy scores as a function of environmental success probability', 
             fontsize=40, y=0.98)  # Reduced title size and moved closer to plots
 plt.subplots_adjust(wspace=0.15, top=0.9, right=0.9, left=0.05, bottom=0.05)  # Added left margin and slightly increased wspace
 plt.show()
@@ -1357,8 +1443,8 @@ for i, trial_type in enumerate(trial_types):
                       alpha=0.6, s=100)  # Larger points
     
     # Set labels and title with increased font sizes
-    axes[i].set_xlabel('P(Success)', fontsize=20, labelpad=15)
-    axes[i].set_ylabel('P(Alternative)', fontsize=20, labelpad=15)
+    axes[i].set_xlabel('Current $p(\mathrm{success})$', fontsize=20, labelpad=15)
+    axes[i].set_ylabel('Alternative $p(\mathrm{success})$', fontsize=20, labelpad=15)
     axes[i].set_title(f'{trial_type}', fontsize=30)
     
     # Thicker grid lines
@@ -1376,13 +1462,13 @@ cbar_ax = fig.add_axes([1.02, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
 sm = plt.cm.ScalarMappable(cmap='viridis', norm=norm_2d)
 sm.set_array([])
 cbar = fig.colorbar(sm, cax=cbar_ax)
-cbar.set_label('ANN Output', size=25, labelpad=15)
+cbar.set_label('BC Policy Score', size=25, labelpad=15)
 cbar.ax.tick_params(labelsize=20)
 # Format colorbar ticks to show only 1 digit after decimal point
 cbar.ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.1f'))
 
 plt.tight_layout(pad=5.0)  # Increased padding
-plt.suptitle('2D View: Action Network Response to P(Success) and P(Alternative)', 
+plt.suptitle('BC policy scores as a function of environmental success probabilities', 
             fontsize=40, y=1.1)  # Larger title and adjusted position
 plt.subplots_adjust(top=0.85, wspace=0.3, right=0.95)  # Adjusted spacing and right margin for colorbar
 plt.show()
@@ -1704,7 +1790,7 @@ plt.text(0.05, 0.95, stats_text, transform=plt.gca().transAxes,
          verticalalignment='top', fontsize=16, family='monospace')
 
 # Enhanced labels and formatting
-plt.xlabel('Standardized Value Network Output', fontweight='bold', labelpad=12)
+plt.xlabel('Standardized Value Network Output', labelpad=12)
 plt.ylabel('Log Response Time (RT)', labelpad=12)
 plt.title('Neural Value Coding Predicts Decision Latency', 
           fontweight='bold', pad=20, fontsize=30)

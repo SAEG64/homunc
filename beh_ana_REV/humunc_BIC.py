@@ -8,6 +8,9 @@ Homunc Behavioral Analysis
 import pandas as pd
 import numpy as np
 import statsmodels.formula.api as smf
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from statsmodels.tools.tools import add_constant
+import scipy.stats as stats
 import matplotlib.pyplot as plt
 import os
 
@@ -17,7 +20,7 @@ os.chdir(path)
 mode_index_order = [10, 9, 8, 4, 6, 7, 5, 3, 2, 1, 0]
 
 d = 'data_beh.csv'
-# d = 'data_fmri.csv'
+d = 'data_fmri.csv'
 combined_data = pd.read_csv(d)
 combined_data['BNW_conditions'] = pd.Categorical(combined_data['x37_binary_energy'] - combined_data['x19_wait_when_safe'])
 # combined_data = combined_data[combined_data['x14_p_foraging_gain'] > 0.3]
@@ -27,15 +30,15 @@ combined_data['BNW_conditions'] = pd.Categorical(combined_data['x37_binary_energ
 model_vars = [
     'x17_horizon_correct_adjusted',
     'x13_gain_magnitude',
-    'x24_pseudo0x2Doptimal_horizon0x2D1',
+    # 'x24_pseudo0x2Doptimal_horizon0x2D1',
     # 'x37_binary_energy',
     'x6_continuous_energy_trial_start',
     'x41_expected_energy_change',
     # 'x40_expected_energy_w_boundaries',
     'x14_p_foraging_gain',
-    'x19_wait_when_safe',
+    # 'x19_wait_when_safe',
     'x7_weather_type',
-    # 'BNW_conditions',
+    'BNW_conditions',
     'x22_optimal_policy',
     'BNW_conditions*x7_weather_type',
     'BNW_conditions*x7_weather_type * x14_p_foraging_gain'
@@ -45,7 +48,7 @@ model_vars = [
 model_descriptions = [
     'remaining time-points',
     'gain magnitude',
-    'pseudo optimal values',
+    # 'pseudo optimal values',
     # 'binary energy state',
     'continuous energy state',
     'expected energy change',
@@ -54,7 +57,7 @@ model_descriptions = [
     # 'wait when safe',
     'weather type',
     'ternary state',
-    'optimal policy values',
+    '$ΔQ$ values',
     'ternary state * weather type',
     'ternary state * weather type * $\\mathit{p}$ success'
 ]
@@ -147,7 +150,7 @@ else:
     # For behavioral data, try to load the saved fMRI order
     try:
         fmri_order = pd.read_csv(path + '/fmri_model_order.csv')['model_index'].tolist()
-        comparison_df_ordered = comparison_df.reindex(fmri_order)
+        comparison_df_ordered = comparison_df.sort_values('delta_BIC')
         print("Using saved fMRI model order for behavioral data")
     except FileNotFoundError:
         print("No saved fMRI order found, using behavioral data order")
@@ -226,6 +229,79 @@ plt.xlim(0, 1)
 plt.tight_layout()
 plt.savefig(os.path.join(path, 'hierarchical_model_weights.png'), dpi=300)
 plt.show()
+
+# %% =====================================================================================================
+"""=== Commonality Analysis Between Weather and P(Success) ==="""
+mask = (combined_data['x14_p_foraging_gain'] > 0.3) & \
+               (combined_data['x14_p_foraging_gain'] < 0.7)
+
+combined_data_masked = combined_data[mask]
+
+import statsmodels.api as sm
+import pandas as pd
+
+# Test correlation for key predictors
+x = combined_data_masked['x14_p_foraging_gain']
+y = combined_data_masked['x7_weather_type']
+
+r, p = stats.pearsonr(x, y)
+print("Correlation:", r)
+print("p-value:", p)
+# Compute VIFs for key predictors
+predictors = ["x7_weather_type", "x14_p_foraging_gain"]
+X = combined_data_masked[predictors]
+
+X_const = add_constant(X)
+
+vif_df = pd.DataFrame({
+    "variable": X_const.columns,
+    "VIF": [variance_inflation_factor(X_const.values, i)
+            for i in range(X_const.shape[1])]
+})
+
+print(vif_df)
+
+# Fit full regression model
+X = combined_data_masked[['x7_weather_type', 'x14_p_foraging_gain', 'BNW_conditions']]
+X = sm.add_constant(X)
+y = combined_data_masked['x11_choice']
+
+model_full = sm.OLS(y, X).fit()
+R2_full = model_full.rsquared
+
+def get_R2(predictors):
+    X_sub = sm.add_constant(combined_data_masked[predictors])
+    return sm.OLS(y, X_sub).fit().rsquared
+
+# Fit all subset models
+R2_1 = get_R2(['x7_weather_type'])
+R2_2 = get_R2(['x14_p_foraging_gain'])
+R2_3 = get_R2(['BNW_conditions'])
+
+R2_12 = get_R2(['x7_weather_type', 'x14_p_foraging_gain'])
+R2_13 = get_R2(['x7_weather_type', 'BNW_conditions'])
+R2_23 = get_R2(['x14_p_foraging_gain', 'BNW_conditions'])
+
+# Compute unique shared components
+U1 = R2_full - R2_23
+U2 = R2_full - R2_13
+U3 = R2_full - R2_12
+
+C12 = R2_12 - U1 - U2
+C13 = R2_13 - U1 - U3
+C23 = R2_23 - U2 - U3
+
+C123 = R2_full - (U1 + U2 + U3 + C12 + C13 + C23)
+
+# Put into a nice table
+import pandas as pd
+
+commonality_table = pd.DataFrame({
+    'Component': ['U1','U2','U3','C12','C13','C23','C123'],
+    'Variance': [U1, U2, U3, C12, C13, C23, C123]
+})
+
+print(commonality_table)
 
 # %% =====================================================================================================
 """=== Test out of sample accuracy of the best model ==="""
@@ -514,48 +590,66 @@ model_results = result
 params = model_results.params
 cov_matrix = model_results.cov_params()
 
-# Define contrast: Difference between Binary Energy and Trade-off interactions with weather
-# We want to test if (Binary Energy × Weather) - (Trade-off × Weather) = 0
-contrast_weather = np.zeros_like(params)
-tradeoff_weather_idx = list(params.index).index("BNW_conditions[T.0]:x7_weather_type")
-binary_weather_idx = list(params.index).index("BNW_conditions[T.1]:x7_weather_type")
-contrast_weather[binary_weather_idx] = 1
-contrast_weather[tradeoff_weather_idx] = -1
+# Build maps of parameter indices for the BNW x Weather interaction and the BNW x Weather x P_success three-way
+param_names = list(params.index)
 
-# Calculate contrast value and standard error
-contrast_value = np.dot(contrast_weather, params)
-contrast_se = np.sqrt(np.dot(contrast_weather, np.dot(cov_matrix, contrast_weather)))
+weather_map = {}
+three_way_map = {}
+for i, name in enumerate(param_names):
+    if 'BNW_conditions[T.' in name and ':x7_weather_type' in name and ':x14_p_foraging_gain' not in name:
+        level = name.split('BNW_conditions[T.')[1].split(']')[0]
+        weather_map[level] = i
+    if 'BNW_conditions[T.' in name and ':x7_weather_type:x14_p_foraging_gain' in name:
+        level = name.split('BNW_conditions[T.')[1].split(']')[0]
+        three_way_map[level] = i
 
-# Calculate t-statistic and p-value
-t_stat = contrast_value / contrast_se
-p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=model_results.df_resid))
+def compute_and_print_contrast(pos_idx, neg_idx, label, cov_mat=cov_matrix, param_vec=params):
+    cont = np.zeros_like(param_vec, dtype=float)
+    cont[pos_idx] = 1.0
+    cont[neg_idx] = -1.0
+    value = float(np.dot(cont, param_vec))
+    se = float(np.sqrt(np.dot(cont, np.dot(cov_mat, cont))))
+    t_stat = value / se if se != 0 else np.nan
+    p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df=model_results.df_resid)) if not np.isnan(t_stat) else np.nan
+    print(f"\n{label}")
+    print(f" Contrast value: {value:.4f}")
+    print(f" Standard error: {se:.4f}")
+    print(f" t-statistic: {t_stat:.4f}")
+    print(f" p-value: {p_val:.4f}")
 
-print("\nDifference between Binary Energy vs Trade-off interaction with weather:")
-print(f"Contrast value: {contrast_value:.4f}")
-print(f"Standard error: {contrast_se:.4f}")
-print(f"t-statistic: {t_stat:.4f}")
-print(f"p-value: {p_value:.4f}")
+# Existing Binary vs Trade-off (if present) for Weather and Three-way (recompute to ensure consistency)
+if '1' in weather_map and '0' in weather_map:
+    compute_and_print_contrast(weather_map['1'], weather_map['0'], "Binary Energy vs Trade-off (Weather interaction)")
+else:
+    print("\nBinary vs Trade-off (Weather interaction) params not found.")
 
-# Same for the three-way interaction with p_success
-contrast_three_way = np.zeros_like(params)
-tradeoff_three_way_idx = list(params.index).index("BNW_conditions[T.0]:x7_weather_type:x14_p_foraging_gain")
-binary_three_way_idx = list(params.index).index("BNW_conditions[T.1]:x7_weather_type:x14_p_foraging_gain")
-contrast_three_way[binary_three_way_idx] = 1
-contrast_three_way[tradeoff_three_way_idx] = -1
+if '1' in three_way_map and '0' in three_way_map:
+    compute_and_print_contrast(three_way_map['1'], three_way_map['0'], "Binary Energy vs Trade-off (Three-way interaction)")
+else:
+    print("\nBinary vs Trade-off (Three-way interaction) params not found.")
 
-# Calculate contrast value and standard error
-contrast_value_3way = np.dot(contrast_three_way, params)
-contrast_se_3way = np.sqrt(np.dot(contrast_three_way, np.dot(cov_matrix, contrast_three_way)))
+# New: Wait-when-safe vs Trade-off
+# Wait-when-safe level should be represented by '-1' (based on your BNW coding: 1=BES, 0=Trade-off, -1=WWS)
+if '-1' in weather_map and '0' in weather_map:
+    compute_and_print_contrast(weather_map['-1'], weather_map['0'], "Wait-when-safe vs Trade-off (Weather interaction)")
+else:
+    print("\nWait-when-safe vs Trade-off (Weather interaction) params not found.")
 
-# Calculate t-statistic and p-value
-t_stat_3way = contrast_value_3way / contrast_se_3way
-p_value_3way = 2 * (1 - stats.t.cdf(abs(t_stat_3way), df=model_results.df_resid))
+if '-1' in three_way_map and '0' in three_way_map:
+    compute_and_print_contrast(three_way_map['-1'], three_way_map['0'], "Wait-when-safe vs Trade-off (Three-way interaction)")
+else:
+    print("\nWait-when-safe vs Trade-off (Three-way interaction) params not found.")
 
-print("\nDifference between Binary Energy vs Trade-off three-way interaction:")
-print(f"Contrast value: {contrast_value_3way:.4f}")
-print(f"Standard error: {contrast_se_3way:.4f}")
-print(f"t-statistic: {t_stat_3way:.4f}")
-print(f"p-value: {p_value_3way:.4f}")
+# New: Wait-when-safe vs Binary Energy (WWS vs BES)
+if '-1' in weather_map and '1' in weather_map:
+    compute_and_print_contrast(weather_map['-1'], weather_map['1'], "Wait-when-safe vs Binary Energy (Weather interaction)")
+else:
+    print("\nWait-when-safe vs Binary Energy (Weather interaction) params not found.")
+
+if '-1' in three_way_map and '1' in three_way_map:
+    compute_and_print_contrast(three_way_map['-1'], three_way_map['1'], "Wait-when-safe vs Binary Energy (Three-way interaction)")
+else:
+    print("\nWait-when-safe vs Binary Energy (Three-way interaction) params not found.")
 
 # %% ====================================================================================================
 """=== Plot Weather Interaction ==="""

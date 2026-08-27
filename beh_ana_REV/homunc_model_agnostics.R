@@ -198,3 +198,96 @@ ggsave("ternary_x_weather_plot.png", p2 + theme(
   aspect.ratio = 1                       # Decrease plot height by setting aspect ratio
 ), width = 10, height = 10, dpi = 300)
 
+# Create a custom legend for line types
+legend_data <- data.frame(
+  x = c(0.1, 0.1),
+  y = c(0.9, 0.7),
+  linetype = c("solid", "dashed"),
+  label = c(
+    "'multi-feature model'",
+    "'\u0394' * italic(Q) ~ 'model'"
+  )
+)
+
+# Create a separate plot for the custom legend
+legend_plot <- ggplot(legend_data, aes(x = x, y = y)) +
+  geom_segment(aes(x = x, y = y, xend = x + 0.15, yend = y, linetype = linetype), 
+               color = "grey", size = 2) +
+  geom_text(aes(x = x + 0.2, y = y, label = label), 
+            hjust = 0, size = 8, color = "black") +
+  scale_linetype_manual(values = c("solid" = "solid", "dashed" = "dashed")) +
+  xlim(0, 1) + ylim(0, 1) +
+  theme_void() +
+  theme(legend.position = "none")
+
+# Save the custom legend
+ggsave("custom_legend.png", legend_plot, width = 6, height = 2, dpi = 300)
+
+
+legend_data <- data.frame(
+  x = c(0.10, 0.10),
+  y = c(0.75, 0.35),
+  xend = c(0.25, 0.25),
+  linetype = c("solid", "dashed")
+)
+
+legend_plot <- ggplot() +
+  
+  geom_segment(
+    data = legend_data,
+    aes(
+      x = x,
+      y = y,
+      xend = xend,
+      yend = y,
+      linetype = linetype
+    ),
+    colour = "grey40",
+    linewidth = 1.5,
+    show.legend = FALSE
+  ) +
+  
+  annotate(
+    "text",
+    x = 0.30,
+    y = 0.75,
+    label = "multi-feature model",
+    hjust = 0,
+    size = 8
+  ) +
+  
+  annotate(
+    "text",
+    x = 0.30,
+    y = 0.35,
+    label = "Delta * italic(Q) ~ model",
+    parse = TRUE,
+    hjust = 0,
+    size = 8
+  ) +
+  
+  scale_linetype_identity() +
+  
+  coord_cartesian(
+    xlim = c(0, 1),
+    ylim = c(0, 1),
+    clip = "off"
+  ) +
+  
+  theme_void() +
+  
+  theme(
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+legend_plot
+
+ggsave(
+  filename = "model_legend.pdf",
+  plot = legend_plot,
+  width = 7,
+  height = 1.6,
+  units = "in",
+  device = cairo_pdf,
+  bg = "transparent"
+)

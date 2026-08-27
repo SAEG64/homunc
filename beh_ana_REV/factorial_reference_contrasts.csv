@@ -1,0 +1,5 @@
+contrast,coefficient,estimate,SE,z,p
+Binary Energy vs Trade-off (Weather interaction),BNW_conditionsBinary Energy:x7_weather_type2,-1.8437108782604266,0.29176744208959104,-6.319111087433432,2.6307212317215254e-10
+Binary Energy vs Trade-off (Three-way interaction),BNW_conditionsBinary Energy:x7_weather_type2:p_success_centered,3.926386944611566,3.7212446799790126,1.055127324934116,0.29136709645449677
+Wait When Safe vs Trade-off (Weather interaction),BNW_conditionsWait When Safe:x7_weather_type2,-2.0119385853218654,0.1665525942116014,-12.079899414630203,1.3488463233416817e-33
+Wait When Safe vs Trade-off (Three-way interaction),BNW_conditionsWait When Safe:x7_weather_type2:p_success_centered,0.9426358384712742,2.2131392257147686,0.42592703952768035,0.6701610112074012

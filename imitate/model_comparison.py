@@ -132,6 +132,7 @@ print(f"evidence lower bound 3x2 factorial = {elbo:.3f}")
 
 # Predict actions
 actions_pred = result.predict()
+action_pred_series = pd.Series(actions_pred, index=d.index)
 # Area under the curve
 auc = roc_auc_score(d['acts'], actions_pred)
 print(f"AUC-ROC = {auc:.3f}")
